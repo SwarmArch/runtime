@@ -24,8 +24,6 @@
 
 #include <cassert>
 
-#include <swarm/swarm.h>
-
 #ifndef SCC_SERIAL_RUNTIME
 
 #undef PLS_APP_MAX_ARGS
@@ -36,6 +34,7 @@
 
 #include "scc/serial.h"
 #include <scc/rt.h>
+#include "callfunc.h"
 
 #endif
 
@@ -52,21 +51,27 @@ static inline void run() {
 }
 
 template<typename F, F* f, typename... Args>
+inline void __memRunner(Timestamp ts, uint64_t args) {
+    auto tup = reinterpret_cast<std::tuple<Args...>*>(args);
+    callFunc(f, ts, *tup, typename gens<sizeof...(Args)>::type());
+    delete tup;
+}
+
+template<typename F, F* f, typename... Args>
 __attribute__((always_inline))
 inline void enqueueTask(Timestamp ts, Hint hint, Args... args);
 
 template<typename F, F* f, typename... Args>
 inline void enqueueTask(Timestamp ts, Hint hint, Args... args) {
 #ifndef SCC_SERIAL_RUNTIME
-    // Coalescers must perform a bare enqueue of splitters with no hint hashing.
-    // PRODUCER is also crucial for performance of unordered PLS apps.
-    if (hint.flags & EnqFlags(NOHASH | PRODUCER)) {
-        __enqueueHwTask<F, f, Args...>(ts, hint, args...);
-        return;
-    }
+    __enqueueHwTask<F, f, Args...>(ts, hint, args...);
+#else
+    auto tup = new std::tuple<Args...>(args...);
+    ((hint.flags & EnqFlags::SUPERDOMAIN) ? __sccrt_serial_enqueue_super
+                                          : __sccrt_serial_enqueue)(
+            reinterpret_cast<void*>(__memRunner<F, f, Args...>), ts,
+            reinterpret_cast<uint64_t>(tup), 42, 42, 42, 42);
 #endif
-
-    swarm_spawn (ts) (*f)(ts, args...);
 }
 
 // For the serial runtime, we must provide serial implementations of features
@@ -91,8 +96,13 @@ static inline void undeepen() {
     __sccrt_serial_undeepen();
 }
 
+static inline void info(const char* str) {
+    puts(str);
+}
 template <typename... Args>
-static inline void info(const char* str, Args... args) {
+static void info(const char* str, Args... args) __attribute__((noinline));
+template <typename... Args>
+static void info(const char* str, Args... args) {
     printf(str, args...);
     printf("\n");
 }
@@ -101,6 +111,11 @@ static inline void info(const char* str, Args... args) {
 // does not create any threads, there's no need for the FS & GS thread state
 // hack, so we can make this a no-op by providing this empty definition here.
 static inline void __record_main_fsgs_addresses() {}
+
+// These only affect speculative execution, so the need not have any effect
+// in a serial runtime
+static inline void serialize() {}
+static inline void clearReadSet() {}
 
 #endif
 

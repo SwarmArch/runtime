@@ -22,7 +22,9 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
 extern "C" {
+#endif
 
 // Launch progressive enqueuers for parallelized loops with unknown trip counts.
 void __sccrt_enqueue_progressive_64(void (*iterTask)(uint64_t, uint32_t*, void*),
@@ -44,7 +46,7 @@ void __sccrt_log_loop_end(const char *loop_descriptor);
 
 void __sccrt_log_read(const char *access_descriptor, void *address, uint64_t size);
 void __sccrt_log_write(const char *access_descriptor, void *address, uint64_t size);
-uint64_t __sccrt_log_task_spawn();
+uint64_t __sccrt_log_task_spawn(void);
 void __sccrt_log_task_start(const char *task_descriptor, uint64_t dynamic_task_id, uint64_t static_task_id, uint64_t inst_count);
 
 // Parallel reductions via thread-private variables
@@ -81,17 +83,19 @@ SCCRT_REDUCTION_DECLARATIONS(double, max)
 
 
 // Serial software queuing of tasks
-constexpr unsigned __SCCRT_SERIAL_MAX_ARGS = 5;
+static const unsigned __SCCRT_SERIAL_MAX_ARGS = 5;
 void __sccrt_serial_enqueue(void *taskfn, uint64_t ts, uint64_t, uint64_t,
                             uint64_t, uint64_t, uint64_t);
 void __sccrt_serial_enqueue_super(void *taskfn, uint64_t ts, uint64_t, uint64_t,
                                   uint64_t, uint64_t, uint64_t);
-void __sccrt_serial_deepen();
-void __sccrt_serial_undeepen();
-void __sccrt_serial_heartbeat();
-uint64_t __sccrt_serial_get_timestamp();
-uint64_t __sccrt_serial_get_timestamp_super();
+void __sccrt_serial_deepen(void);
+void __sccrt_serial_undeepen(void);
+void __sccrt_serial_heartbeat(void);
+uint64_t __sccrt_serial_get_timestamp(void);
+uint64_t __sccrt_serial_get_timestamp_super(void);
 
+#ifdef __cplusplus
 }  // extern "C"
+#endif
 
 #endif // __PLS_SCC_RT_H__

@@ -178,7 +178,8 @@ static inline void __enqueue_task_skipargs(uint64_t op, uint64_t taskPtr,
         uint64_t ts, uint64_t hint, Args... args) {
     bool skipTask = (op & EnqFlags::SAMETASK);
     bool skipHint = (op & EnqFlags::SAMEHINT) || (op & EnqFlags::NOHINT);
-    bool skipTs = (op & EnqFlags::NOTIMESTAMP) || (op & EnqFlags::SAMETIME);
+    bool skipTs = (op & EnqFlags::NOTIMESTAMP) || (op & EnqFlags::SAMETIME) ||
+                  (op & EnqFlags::RUNONABORT);
 
     if (!skipTs && !skipTask && !skipHint) {
         __enqueue_task_helper(op, ts, args..., taskPtr, hint);

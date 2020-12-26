@@ -51,3 +51,9 @@ enum EnqFlags {
     RUNONABORT   = 1 << 24, // this task runs when the parent is aborted, and is discarded if the parent commits. Can only be enqueued from priv mode, and is a NOP when irrevocable
 };
 
+#ifdef __cplusplus
+constexpr EnqFlags operator|(EnqFlags a, EnqFlags b) {
+    return static_cast<EnqFlags>(static_cast<unsigned int>(a) | static_cast<unsigned int>(b));
+}
+#endif
+
