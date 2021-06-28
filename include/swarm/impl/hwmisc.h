@@ -1,5 +1,5 @@
 /** $lic$
- * Copyright (C) 2014-2020 by Massachusetts Institute of Technology
+ * Copyright (C) 2014-2021 by Massachusetts Institute of Technology
  *
  * This file is distributed under the University of Illinois Open Source
  * License. See LICENSE.TXT for details.
@@ -30,7 +30,7 @@
 #include <asm/prctl.h> // For ARCH_GET_FS etc
 #include <sys/syscall.h>
 #include "../hooks.h"
-#include "coalescing.h"
+#include "spillers.h"
 
 
 /* "Hardware" implementation of miscellaneous parts of the runtime. Simulator
@@ -40,17 +40,19 @@
 
 namespace swarm {
 
-// [victory] In C++17, we can just define inline global variables in headers.
-// Until then, the static-variable-inside-inline-function trick suffices
-// to achieve the same effect.
-inline unsigned long& __mainThreadFSAddr() {
-  static unsigned long x = 0;
-  return x;
-}
-inline unsigned long& __mainThreadGSAddr() {
-  static unsigned long x = 0;
-  return x;
-}
+// [victory] C++17 would allow defining inline variables in this header file:
+//inline unsigned long __mainThreadFSAddr = 0;
+//inline unsigned long __mainThreadGSAddr = 0;
+// But since we want to support older versions of GCC, lets use the
+// static-member-of-class-template trick.  See: https://wg21.link/n4424
+template <typename T> struct __HWMiscState {
+    static unsigned long mainThreadFSAddr;
+    static unsigned long mainThreadGSAddr;
+};
+template <typename T> unsigned long __HWMiscState<T>::mainThreadFSAddr = 0;
+template <typename T> unsigned long __HWMiscState<T>::mainThreadGSAddr = 0;
+static unsigned long& __mainThreadFSAddr = __HWMiscState<int>::mainThreadFSAddr;
+static unsigned long& __mainThreadGSAddr = __HWMiscState<int>::mainThreadGSAddr;
 
 // arch_prctl has hardly any support and is tricky to use. Note that
 //     objdump -D /lib/x86_64-linux-gnu/libc.so.6 | grep arch_prctl
@@ -75,9 +77,9 @@ static inline int __arch_prctl(int code, unsigned long addr) {
 // FS/GS registers in pls_worker.
 static inline void __record_main_fsgs_addresses() {
     __arch_prctl(ARCH_GET_FS,
-                 reinterpret_cast<uintptr_t>(&swarm::__mainThreadFSAddr()));
+                 reinterpret_cast<uintptr_t>(&swarm::__mainThreadFSAddr));
     __arch_prctl(ARCH_GET_GS,
-                 reinterpret_cast<uintptr_t>(&swarm::__mainThreadGSAddr()));
+                 reinterpret_cast<uintptr_t>(&swarm::__mainThreadGSAddr));
 }
 
 static void report_pthread_stack_base() {
@@ -107,9 +109,9 @@ static void* pls_worker(void* isMainThread) {
     if (isMainThread) sim_stack_base(__builtin_frame_address(0));
     else report_pthread_stack_base();
 
-    assert((!!swarm::__mainThreadFSAddr()) == (!!swarm::__mainThreadFSAddr()));
+    assert((!!swarm::__mainThreadFSAddr) == (!!swarm::__mainThreadFSAddr));
     unsigned long localThreadFSAddr, localThreadGSAddr;
-    if (swarm::__mainThreadFSAddr()) {
+    if (swarm::__mainThreadFSAddr) {
         // Point all threads' thread-local storage to the main thread's global
         // storage. Record this thread's original FS and GS register values,
         // then set the registers to match the main thread's values.
@@ -117,8 +119,8 @@ static void* pls_worker(void* isMainThread) {
                      reinterpret_cast<uintptr_t>(&localThreadFSAddr));
         __arch_prctl(ARCH_GET_GS,
                      reinterpret_cast<uintptr_t>(&localThreadGSAddr));
-        __arch_prctl(ARCH_SET_FS, swarm::__mainThreadFSAddr());
-        __arch_prctl(ARCH_SET_GS, swarm::__mainThreadGSAddr());
+        __arch_prctl(ARCH_SET_FS, swarm::__mainThreadFSAddr);
+        __arch_prctl(ARCH_SET_GS, swarm::__mainThreadGSAddr);
     }
 
     sim_barrier();
@@ -129,7 +131,7 @@ static void* pls_worker(void* isMainThread) {
     if (isMainThread) zsim_roi_end();
     sim_barrier();
 
-    if (swarm::__mainThreadFSAddr()) {
+    if (swarm::__mainThreadFSAddr) {
         // Restore the thread's FS/GS registers before it exits()
         __arch_prctl(ARCH_SET_FS, localThreadFSAddr);
         __arch_prctl(ARCH_SET_GS, localThreadGSAddr);
@@ -188,50 +190,58 @@ static void task_exception_handler() {
 }
 
 static void setup_task_handlers() {
-    // Run a coalescer that doesn't delete any tasks
+    // Run a spiller that doesn't delete any tasks
     // 1) to avoid unused function warnings
     // 2) to pre-populate the global offset table with
     //    functions so it isn't aborted.
     //    (e.g. new[], delete[], swarm::info if used)
-    swarm::coalescer(0, 0);
+    swarm::spiller(0, 0);
 
-    uintptr_t splitter_ptr = reinterpret_cast<uintptr_t>(
-            bareRunner<decltype(swarm::splitter), swarm::splitter,
+    uintptr_t requeuer_ptr = reinterpret_cast<uintptr_t>(
+            bareRunner<decltype(swarm::requeuer), swarm::requeuer,
                        TaskDescriptors*>);
-    uintptr_t frame_splitter_ptr = reinterpret_cast<uintptr_t>(
-            bareRunner<decltype(swarm::frame_splitter), swarm::frame_splitter,
+    uintptr_t frame_requeuer_ptr = reinterpret_cast<uintptr_t>(
+            bareRunner<decltype(swarm::frame_requeuer), swarm::frame_requeuer,
                        TaskDescriptors*>);
 
     sim_magic_op_3(MAGIC_OP_TASK_HANDLER_ADDRS,
-                   reinterpret_cast<uint64_t>(&swarm::coalescer),
-                   splitter_ptr,
+                   reinterpret_cast<uint64_t>(&swarm::spiller),
+                   requeuer_ptr,
                    reinterpret_cast<uint64_t>(&swarm::task_exception_handler));
     sim_magic_op_2(MAGIC_OP_TASK_FRAMEHANDLER_ADDRS,
-                   reinterpret_cast<uint64_t>(&swarm::frame_coalescer),
-                   frame_splitter_ptr);
+                   reinterpret_cast<uint64_t>(&swarm::frame_spiller),
+                   frame_requeuer_ptr);
 }
 
+#ifdef SCC_RUNTIME
+#define __SCC_serial_attr gnu::noinline, scc::noswarmify
+#else
+#define __SCC_serial_attr
+#endif
 
-static inline void info(const char* str) {
+[[__SCC_serial_attr]] static inline void info(const char* str) {
     sim_magic_op_1(MAGIC_OP_WRITE_STD_OUT, reinterpret_cast<uint64_t>(str));
 }
 
 template <typename... Args>
-static inline void info(const char* str, Args... args) {
+[[__SCC_serial_attr]] static inline void info(const char* str, Args... args) {
     char buf[1024];
     snprintf(buf, sizeof(buf)-1, str, args...);
     swarm::info(buf);
 }
 
 static inline uint32_t num_threads() {
-    uint32_t dontcare = 0;
-    uint32_t nthreads = 0;
-    void* dontcareptr = nullptr;
-    sim_thread_stacks(&nthreads, &dontcareptr, &dontcare);
-    return nthreads;
+    return sim_get_num_threads();
 }
 static inline uint32_t tid() {
     return sim_get_tid();
+}
+
+static inline uint32_t numTiles() {
+    return sim_get_num_tiles();
+}
+static inline uint32_t tileId() {
+    return sim_get_tile_id();
 }
 
 static inline void serialize() { sim_serialize(); }

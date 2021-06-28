@@ -1,5 +1,5 @@
 /** $lic$
- * Copyright (C) 2014-2020 by Massachusetts Institute of Technology
+ * Copyright (C) 2014-2021 by Massachusetts Institute of Technology
  *
  * This file is distributed under the University of Illinois Open Source
  * License. See LICENSE.TXT for details.
@@ -32,8 +32,16 @@ namespace swarm {
 
 static inline void run();
 
+/* Returns # hardware contexts == # cores * threads per core. */
 static inline uint32_t num_threads();
+/* Returns thread ID numbers in the range [0, num_threads()). */
 static inline uint32_t tid();
+
+/* Returns the number of task units that a task could be sent to. */
+static inline uint32_t numTiles();
+/* Returns tile ID numbers in the range [0, numTiles()).
+ * This can be used for a NOHASH spatial hint to create tasks that stay local. */
+static inline uint32_t tileId();
 
 /* Every runtime must implement this one.
  * Force inline this function that looks complicated to the compiler,
@@ -116,7 +124,7 @@ static inline Timestamp superTimestamp();
 #elif defined(ORACLE_RUNTIME)
 #include "impl/oracle_runtime.h"
 #elif defined(SCC_RUNTIME) || defined(SCC_SERIAL_RUNTIME)
-#include "impl/scc_runtime.h"
+#include "scc/swarm_runtime.h"
 #else
 #error "Need appropriate runtime"
 #endif

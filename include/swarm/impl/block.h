@@ -1,5 +1,5 @@
 /** $lic$
- * Copyright (C) 2014-2020 by Massachusetts Institute of Technology
+ * Copyright (C) 2014-2021 by Massachusetts Institute of Technology
  *
  * This file is distributed under the University of Illinois Open Source
  * License. See LICENSE.TXT for details.
@@ -28,6 +28,13 @@ namespace block {
 template <class Iterator>
 constexpr uint64_t elementsPerLine() {
     return std::max(1ul, SWARM_CACHE_LINE /
+            sizeof(typename std::iterator_traits<Iterator>::value_type));
+}
+
+
+template <uint32_t LinesPerGrain, class Iterator>
+constexpr uint64_t elementsPerGrain() {
+    return std::max(1ul, SWARM_CACHE_LINE * LinesPerGrain /
             sizeof(typename std::iterator_traits<Iterator>::value_type));
 }
 

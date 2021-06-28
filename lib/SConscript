@@ -9,12 +9,14 @@ if GetOption('clang'):
     env['CXX'] = 'clang++'
 
 env.Append(CPPPATH = [os.path.join(Dir('.').srcnode().up().abspath, 'include')])
-env.Append(CPPFLAGS = ['-std=c++14', '-Wall', '-Werror', '-O3', '-gdwarf-3',])
+env.Append(CPPFLAGS = ['-Wall', '-Werror', '-O3', '-gdwarf-3',])
 env.Append(CPPDEFINES = ['NASSERT', 'NDEBUG'])
+env.Append(CXXFLAGS = ['-std=c++14'])
+env.Append(CFLAGS = ['-std=c11'])
 
 # FIXME(mcj) libsimalloc is identical for all runtimes, but libswarm differs per
 # runtime. We should build the former only once.
-libsimalloc = env.StaticLibrary(target='simalloc', source=['simalloc.cpp'])
+libsimalloc = env.StaticLibrary(target='simalloc', source=['simalloc.c'])
 
 swarmenv = env.Clone()
 swarmenv.Append(CPPDEFINES = [
@@ -22,14 +24,10 @@ swarmenv.Append(CPPDEFINES = [
         + '_RUNTIME'
         ])
 
-if runtime == 'seq':
-    swarm_source = ['seq_tasks.cpp']
-elif runtime == 'tls':
-    swarm_source = ['tls_runtime.cpp', 'seq_tasks.cpp']
-elif runtime == 'oracle':
-    swarm_source = Glob('oracle_*.cpp')
+if runtime == 'tls':
+    swarm_source = ['tls_runtime.cpp']
 else:
-    assert runtime in ['swarm', 'scc', 'scc_serial', 'competition'], 'Unknown runtime'
+    assert runtime in ['swarm', 'seq', 'oracle', 'scc', 'scc_serial', 'competition'], 'Unknown runtime'
     swarm_source = []
 libswarm = swarmenv.StaticLibrary(target='swarm', source=swarm_source) if swarm_source else None
 

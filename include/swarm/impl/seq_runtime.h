@@ -1,5 +1,5 @@
 /** $lic$
- * Copyright (C) 2014-2020 by Massachusetts Institute of Technology
+ * Copyright (C) 2014-2021 by Massachusetts Institute of Technology
  *
  * This file is distributed under the University of Illinois Open Source
  * License. See LICENSE.TXT for details.
@@ -56,7 +56,9 @@ static inline void info(const char* str, Args... args) {
 }
 
 static inline uint32_t num_threads() { return 1; }
+static inline uint32_t numTiles() { return 1; }
 static inline uint32_t tid() { return 0; }
+static inline uint32_t tileId() { return 0; }
 static inline void serialize() {}
 static inline void deepen(uint64_t) {
     swarm::info("swarm::deepen() unimplemented");

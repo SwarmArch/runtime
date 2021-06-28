@@ -1,5 +1,5 @@
 /** $lic$
- * Copyright (C) 2014-2020 by Massachusetts Institute of Technology
+ * Copyright (C) 2014-2021 by Massachusetts Institute of Technology
  *
  * This file is distributed under the University of Illinois Open Source
  * License. See LICENSE.TXT for details.
@@ -26,7 +26,15 @@
 
 namespace swarm {
 
-_PLS_GLOBAL_PQ_QUALIFIER swarm::PriorityQueue pq;
+// [victory] C++17 would allow defining an inline variable in this header file:
+//inline swarm::PriorityQueue pq;
+// But since we want to support older versions of GCC, lets use the
+// static-member-of-class-template trick.  See: https://wg21.link/n4424
+template <typename T> struct __SeqTasks {
+  static swarm::PriorityQueue pq;
+};
+template <typename T> swarm::PriorityQueue __SeqTasks<T>::pq;
+static swarm::PriorityQueue& pq = __SeqTasks<int>::pq;
 
 #ifndef PLS_SINGLE_TASKFUNC
 

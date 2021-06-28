@@ -1,5 +1,5 @@
 /** $lic$
- * Copyright (C) 2014-2020 by Massachusetts Institute of Technology
+ * Copyright (C) 2014-2021 by Massachusetts Institute of Technology
  *
  * This file is distributed under the University of Illinois Open Source
  * License. See LICENSE.TXT for details.
@@ -69,6 +69,9 @@
 #define MAGIC_OP_IN_FF              (1053)  // no args
 #define MAGIC_OP_REGISTER_END_HANDLER (1054)  // arg: function pointer
 #define MAGIC_OP_GET_THREAD_ID      (1055)  // no args
+#define MAGIC_OP_GET_TILE_ID        (1056)  // no args
+#define MAGIC_OP_GET_NUM_THREADS    (1057)  // no args
+#define MAGIC_OP_GET_NUM_TILES      (1058)  // no args
 
 // args: pointers to finish, abort, and termination handlers
 #define MAGIC_OP_TASK_DEQUEUE_SETUP (2048)
@@ -76,9 +79,12 @@
 
 #define MAGIC_OP_TASK_REMOVE_UNTIED         (2049)
 #define MAGIC_OP_TASK_REMOVE_OUT_OF_FRAME   (2050)
-// args: pointer to coalescer, splitter, and exception addresses
+// args: pointer to generic spiller, requeuer, and exception addresses
 #define MAGIC_OP_TASK_HANDLER_ADDRS         (2051)
 #define MAGIC_OP_TASK_FRAMEHANDLER_ADDRS    (2052)
+// for application-specific spillers/requeuers:
+#define MAGIC_OP_REGISTER_SPILLER           (2053)
+#define MAGIC_OP_REMOVE_UNTIED_TASKFN       (2054)
 
 #define MAGIC_OP_ALLOC_BASE         (8192)
 #define MAGIC_OP_ALLOC              (MAGIC_OP_ALLOC_BASE + 0)
@@ -294,6 +300,18 @@ static inline bool sim_isirrevocable(void) {
 
 static inline uint64_t sim_get_tid(void) {
     return sim_magic_op_r0(MAGIC_OP_GET_THREAD_ID);
+}
+
+static inline uint64_t sim_get_tile_id(void) {
+    return sim_magic_op_r0(MAGIC_OP_GET_TILE_ID);
+}
+
+static inline uint64_t sim_get_num_threads(void) {
+    return sim_magic_op_r0(MAGIC_OP_GET_NUM_THREADS);
+}
+
+static inline uint64_t sim_get_num_tiles(void) {
+    return sim_magic_op_r0(MAGIC_OP_GET_NUM_TILES);
 }
 
 static inline void sim_read_pseudosyscall(size_t bytes) {

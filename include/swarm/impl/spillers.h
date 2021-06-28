@@ -1,5 +1,5 @@
 /** $lic$
- * Copyright (C) 2014-2020 by Massachusetts Institute of Technology
+ * Copyright (C) 2014-2021 by Massachusetts Institute of Technology
  *
  * This file is distributed under the University of Illinois Open Source
  * License. See LICENSE.TXT for details.
@@ -16,12 +16,27 @@
  * FOR A PARTICULAR PURPOSE.
  */
 
+/*
+ * This header file defines the software handlers ("spillers")
+ * that spill generic entries from overflowing hardware task queues into
+ * software buffers, and later fill the tasks back into hardware queues.
+ *
+ * A spiller allocates a heap chunk into which it stores tasks removed from a
+ * hardware task queue, and enqueues a single "requeuer" task whose job is to
+ * later read and deallocate the heap chunk and put the spilled tasks back into
+ * the hardware queue.  A spiller can be thought of as "coalescing" several
+ * hardware task queue entries by replacing them with a requeuer task occupying
+ * a single queue entry.  When the requeuer runs, it's as if the single task
+ * queue entry splits up into several task queue entries.  Previously,
+ * "spillers" were called "coalescers" and "requeuers" were called "splitters".
+ */
+
 #pragma once
 
 #include <cstdint>
 #include <algorithm>
 #include <array>
-// No application should ever #include coalescing.h directly.
+// No application should ever #include spillers.h directly.
 #include "../aligned.h"
 #include "../hooks.h"
 #include "../api.h"
@@ -30,7 +45,7 @@
 
 
 #if PLS_APP_MAX_ARGS==0
-#   error "Splitter tasks take one argument, even if the app supports zero args"
+#   error "requeuer tasks take one argument, even if the app supports zero args"
 #endif
 
 namespace swarm {
@@ -51,7 +66,7 @@ template<bool isFrame>
 static inline void __enqueueOrYield(const TaskDescriptor& task) {
     // N.B. any task originally enqueued with NOHINT was assigned a hint
     // from a uniform distribution over ints from 0 to UINT64_MAX. That hint
-    // sent the task to the ROB that houses this splitter, so we reuse the
+    // sent the task to the ROB that houses this requeuer, so we reuse the
     // hint to enqueue the task to the same ROB.
 
     // The lower 16 bits of taskPtrAndFlags are the task's flags
@@ -86,9 +101,10 @@ static inline void __enqueueOrYield(const TaskDescriptor& task) {
                                  );
 }
 
+// Requeuers were called "splitters" in the early Swarm papers
 template <bool isFrame>
-static inline void splitter_impl(swarm::Timestamp, TaskDescriptors* descs) {
-    // This splitter can yield before an enqueue, so we always update the size
+static inline void requeuer_impl(swarm::Timestamp, TaskDescriptors* descs) {
+    // This requeuer can yield before an enqueue, so we always update the size
     // field directly
     __builtin_prefetch(&descs->tds[descs->size - 1].ts);
     while (descs->size) {
@@ -101,11 +117,11 @@ static inline void splitter_impl(swarm::Timestamp, TaskDescriptors* descs) {
     sim_zero_cycle_free(descs);
 }
 
-static inline void splitter(swarm::Timestamp ts, TaskDescriptors* descs) {
-    splitter_impl<false>(ts, descs);
+static inline void requeuer(swarm::Timestamp ts, TaskDescriptors* descs) {
+    requeuer_impl<false>(ts, descs);
 }
-static inline void frame_splitter(swarm::Timestamp ts, TaskDescriptors* descs) {
-    splitter_impl<true>(ts, descs);
+static inline void frame_requeuer(swarm::Timestamp ts, TaskDescriptors* descs) {
+    requeuer_impl<true>(ts, descs);
 }
 
 // It'd be nice to use a bool template parameter rather than passing magicOp as
@@ -115,7 +131,7 @@ static inline void frame_splitter(swarm::Timestamp ts, TaskDescriptors* descs) {
 // https://github.mit.edu/swarm/sim/pull/69
 static inline uint64_t __removeOne(TaskDescriptor* task, TaskDescriptor* end,
                                    uint64_t magicOp, uint64_t minTs,
-                                   uint64_t* splitterFlags, bool* nonTimestamped) {
+                                   uint64_t* requeuerFlags, bool* nonTimestamped) {
     // Prefetch two cachelines ahead, since the instruction loads two lines
     constexpr uint64_t mask = ~(SWARM_CACHE_LINE - 1ul);
     void* prefetch = (void*)(mask &
@@ -151,7 +167,7 @@ static inline uint64_t __removeOne(TaskDescriptor* task, TaskDescriptor* end,
     COMPILER_BARRIER();
 
     if (pls_unlikely(taskPtrAndFlags == 0ul)) return UINT64_MAX;
-    *splitterFlags &= taskPtrAndFlags;
+    *requeuerFlags &= taskPtrAndFlags;
     *nonTimestamped = taskPtrAndFlags & EnqFlags::NOTIMESTAMP;
 
     task->ts = ts;
@@ -176,7 +192,7 @@ static inline uint64_t __removeOne(TaskDescriptor* task, TaskDescriptor* end,
 }
 
 template<bool isFrame>
-static inline void coalescer_impl(swarm::Timestamp, const uint32_t n) {
+static inline void spiller_impl(swarm::Timestamp, const uint32_t n) {
     // Remove n oldest untied tasks from the tile and dump them into memory
     TaskDescriptors* tdstruct = (TaskDescriptors*) sim_zero_cycle_untracked_malloc(
                         sizeof(TaskDescriptors) + n*sizeof(TaskDescriptor));
@@ -191,17 +207,17 @@ static inline void coalescer_impl(swarm::Timestamp, const uint32_t n) {
     TaskDescriptor* const begin = tasks;
     TaskDescriptor* const end = tasks + n;
     TaskDescriptor* task;
-    // For ordinary (non-frame) coalescing/splitting, tag the splitter as
+    // For ordinary (non-frame) spilling, tag the requeuer as
     // * NOTIMESTAMP iff all spilled tasks are NOTIMESTAMP
     // * CANTSPEC iff all spilled tasks are CANTSPEC
-    // The latter ensures that the splitter won't dump tasks that can't run now
+    // The latter ensures that the requeuer won't dump tasks that can't run now
     // anyway.
-    uint64_t splitterFlags = isFrame ? 0 : EnqFlags(NOTIMESTAMP | CANTSPEC);
+    uint64_t requeuerFlags = isFrame ? 0 : EnqFlags(NOTIMESTAMP | CANTSPEC);
     bool nonTimestamped = false;
     for (task = begin; task < end; task++) {
         uint64_t newMin = __removeOne(task, end, magicOp, minTs,
-                                      &splitterFlags, &nonTimestamped);
-        // Frame coalescers only get tasks from non-root domains.
+                                      &requeuerFlags, &nonTimestamped);
+        // Frame spillers only get tasks from non-root domains.
         assert(!isFrame || !nonTimestamped);
         if (nonTimestamped || newMin == UINT64_MAX) break;
         // The timestamp of the removed task precedes (or equals) minTs,
@@ -216,7 +232,7 @@ static inline void coalescer_impl(swarm::Timestamp, const uint32_t n) {
         // Note: an increment was missing from the previous loop
         for (task = task + 1; task < end; task++) {
             uint64_t newMin = __removeOne(task, end, magicOp, 0,
-                                          &splitterFlags, &nonTimestamped);
+                                          &requeuerFlags, &nonTimestamped);
             if (newMin == UINT64_MAX) break;
             if (!nonTimestamped) minTs = 0ul;
         }
@@ -226,40 +242,39 @@ static inline void coalescer_impl(swarm::Timestamp, const uint32_t n) {
 
     if (tdstruct->size > 0) {
         if (!isFrame) {
-            EnqFlags ef = EnqFlags(SAMEHINT | NOHASH | PRODUCER | splitterFlags);
-            swarm::enqueue(swarm::splitter, minTs, ef, tdstruct);
+            EnqFlags ef = SAMEHINT | NONSERIALHINT | NOHASH |
+                          PRODUCER | REQUEUER | (EnqFlags)requeuerFlags;
+            swarm::enqueue(swarm::requeuer, minTs, ef, tdstruct);
         } else {
-            constexpr EnqFlags ef =
-                    EnqFlags(SAMEHINT | NOHASH | PRODUCER | CANTSPEC);
-            swarm::enqueue(swarm::frame_splitter, 42, ef, tdstruct);
+            constexpr EnqFlags ef = SAMEHINT | NONSERIALHINT | NOHASH |
+                                    PRODUCER | REQUEUER | CANTSPEC;
+            swarm::enqueue(swarm::frame_requeuer, 42, ef, tdstruct);
         }
     } else {
-        // Don't create a splitter task if the ROB offered zero tasks.
-        // Unfortunately, even if this coalescer removed only one task, we must
-        // wrap it in a splitter. A splitters is guaranteed to be enqueued to
-        // the same tile as its coalescer, whereas a normal task might be
+        // Don't create a requeuer task if the ROB offered zero tasks.
+        // Unfortunately, even if this spiller removed only one task, we must
+        // wrap it in a requeuer. A requeuer is guaranteed to be enqueued to
+        // the same tile as its spiller, whereas a normal task might be
         // hint-mapped to a different tile (e.g. due to hint-stealing). A
-        // coalescer must never stall, and there is no guarantee that different
+        // spiller must never stall, and there is no guarantee that different
         // tile has a free slot to which to enqueue.
-        // Frankly, if coalescers are frequently removing single tasks, then
+        // Frankly, if spillers are frequently removing single tasks, then
         // there is a more important problem to solve in terms of when a
-        // coalescer is launched.
+        // spiller is launched.
         //
-        // N.B. splitter_impl takes care of deleting the empty tasks array.
-        // TODO Don't even bother removing an untied task if it is the last one
-        // remaining in the ROB.
-        splitter_impl<isFrame>(minTs, tdstruct);
+        // N.B. requeuer_impl takes care of deleting the empty tasks array.
+        requeuer_impl<isFrame>(minTs, tdstruct);
     }
 }
 
-// coalescer is enqueued naked (i.e., without a bareRunner)
+// spiller (a.k.a. "coalescer") is enqueued naked (i.e., without a bareRunner)
 __attribute__((noinline))
-inline void coalescer(swarm::Timestamp ts, const uint32_t n) {
-    coalescer_impl<false>(ts, n);
+inline void spiller(swarm::Timestamp ts, const uint32_t n) {
+    spiller_impl<false>(ts, n);
 }
 __attribute__((noinline))
-inline void frame_coalescer(swarm::Timestamp ts, const uint32_t n) {
-    coalescer_impl<true>(ts, n);
+inline void frame_spiller(swarm::Timestamp ts, const uint32_t n) {
+    spiller_impl<true>(ts, n);
 }
 
 

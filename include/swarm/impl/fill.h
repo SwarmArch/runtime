@@ -1,5 +1,5 @@
 /** $lic$
- * Copyright (C) 2014-2020 by Massachusetts Institute of Technology
+ * Copyright (C) 2014-2021 by Massachusetts Institute of Technology
  *
  * This file is distributed under the University of Illinois Open Source
  * License. See LICENSE.TXT for details.
@@ -18,60 +18,76 @@
 
 #include <cstdint>
 #include <algorithm>
+#include "../algorithm.h"
 #include "../api.h"
 #include "block.h"
 
 namespace swarm {
 
 
+template <class Iterator, class T>
+static inline void __writer(Timestamp, Iterator first, Iterator last, const T& value) {
+    std::fill(first, last, value);
+}
+
+
 // TODO(mcj) add support for hints
 // FIXME(mcj) this is dangerously assuming use of ContiguousIterators
 // (http://en.cppreference.com/w/cpp/iterator), but doesn't actually check which
 // type of iterator is used.
-template <uint8_t BlockSize, EnqFlags Flags, class Iterator, class T>
-static inline void __filler(Timestamp ts, Iterator first, Iterator last,
-        const T& value) {
-    static_assert(BlockSize != 0, "ERROR: __filler<0> should never be created.");
-    if (first == last) {
-        return;
-    } else if (swarm::block::sameGrain<BlockSize>(first, last)) {
-        // Base-case: first and last are within the same cache-line block
-        std::fill(first, last, value);
-    } else {
-        Iterator midpoint = first + ((last - first) / 2);
-        uintptr_t midpointAddr = reinterpret_cast<uintptr_t>(&(*midpoint));
-        uintptr_t alignedAddr = midpointAddr & (~(SWARM_CACHE_LINE - 1ul));
+template <uint8_t BlockSize, EnqFlags Flags, class Iterator, typename T>
+static inline void fill_impl(Timestamp ts, Iterator first, Iterator last, const T& value) {
+  constexpr unsigned grainSize = swarm::block::elementsPerGrain<BlockSize, Iterator>();
+  constexpr size_t elemSize = sizeof(*first);
+  constexpr size_t grainBytes = grainSize * elemSize;
 
-        constexpr size_t elemSize = sizeof(*first);
-        static_assert(!(elemSize & (elemSize - 1ul)),
-                "element size should be a power of two");
+  uintptr_t firstAddr = reinterpret_cast<uintptr_t>(&(*first));
+  uintptr_t lastAddr = reinterpret_cast<uintptr_t>(&(*last));
 
-        // FIXME(victory): What is with this insanely fragile logic?
-        // d_first may be unaligned, so what if d_first > alignedAddr?
-        if (alignedAddr == reinterpret_cast<uintptr_t>(&(*first))) {
-            // The nearest aligned address is first. First and last must
-            // straddle a cache line boundary (otherwise they would be in the
-            // same block). Use the next cacheline for the midpoint.
-            midpoint = first + SWARM_CACHE_LINE / elemSize;
-            assert(midpoint < last);
-        } else if (midpointAddr != alignedAddr) {
-            // Align tasks to a cache line.
-            uint64_t backwardBytes = midpointAddr & (SWARM_CACHE_LINE - 1ul);
-            uint64_t backwardElems = backwardBytes / elemSize;
-            midpoint = midpoint - backwardElems;
-            // midpoint should be strictly ahead of first, otherwise the
-            // aligned address of midpoint would equal first, and we'd be in
-            // the block above
-            assert(midpoint > first);
-        }
-        using fillFnTy = decltype(__filler<BlockSize, Flags, Iterator, T>);
-        constexpr EnqFlags RightFlags = EnqFlags(Flags | SAMETASK);
-        constexpr EnqFlags LeftFlags = swarm::Hint::__replaceNoWithSame(RightFlags);
-        swarm::enqueueTask<fillFnTy, __filler<BlockSize, Flags, Iterator, T> >
-                (ts, LeftFlags, first, midpoint, value);
-        swarm::enqueueTask<fillFnTy, __filler<BlockSize, Flags, Iterator, T> >
-                (ts, RightFlags, midpoint, last, value);
-    }
+  static_assert((grainBytes % SWARM_CACHE_LINE) == 0,
+                "We assume grains are a whole number of cache lines.");
+  static_assert((grainBytes & (grainBytes - 1)) == 0,
+                "We assume cache-line-aligned grains have power-of-2 size.");
+  uintptr_t firstAddrRoundedUp =
+      (firstAddr + grainBytes - 1) & (~(grainBytes - 1ul));
+
+  // If the range falls within a single grain, no point spawning more tasks
+  if (firstAddrRoundedUp >= lastAddr) {
+      std::fill(first, last, value);
+      return;
+  }
+
+  // Start by filling the start of the range up to the first grain boundary
+  size_t firstBytes = firstAddrRoundedUp - firstAddr;
+  assert(firstBytes % elemSize == 0);
+  Iterator firstRoundedUp = first + (firstBytes / elemSize);
+  swarm::enqueue((__writer<Iterator, T>), ts, Flags, first, firstRoundedUp, value);
+
+  // Now, spawn tasks to fill each grain in the rest of the range
+  // [firstRoundedUp, last)
+
+  uint64_t grains = (last - firstRoundedUp) / grainSize;
+  // TODO(victory): A strided version of boost::counting_iterator would let us
+  //                avoid the need to capture firstRoundedUp and thereby save a
+  //                register arg for the enqueuer tasks.
+  // HACK: For now, use 32-bit integer for the grain counter to enable the
+  //       enqueuer task regTupleRunner to pack things into 3 64-bit registers.
+  //       This is safe as long as nobody tries to fill a terabyte-sized array.
+  assert(grains < UINT32_MAX);
+  swarm::enqueue_all<Flags, swarm::max_children - 2>(
+      u32it(0), u32it(grains),
+      [firstRoundedUp, value](Timestamp ts, uint64_t i) {
+          swarm::enqueue((__writer<Iterator, T>), ts, Flags,
+                         firstRoundedUp + (i * grainSize),
+                         firstRoundedUp + ((i + 1) * grainSize),
+                         value);
+      },
+      ts);
+
+  Iterator lastRoundedDown = firstRoundedUp + (grains * grainSize);
+  assert(lastRoundedDown <= last);
+  if (lastRoundedDown < last)
+      swarm::enqueue((__writer<Iterator, T>), ts, Flags, lastRoundedDown, last, value);
 }
 
 
@@ -86,36 +102,31 @@ static inline void fill(Iterator first, Iterator last, const T& value,
     switch(blockSize) {
         case 1:
         {
-            using fillFnTy = decltype(__filler<1u, Flags, Iterator, T>);
-            swarm::enqueueTask<fillFnTy, __filler<1u, Flags, Iterator, T> >(
+            swarm::enqueue((fill_impl<1u, Flags, Iterator, T>),
                     ts, Flags, first, last, value);
             break;
         }
         case 2:
         {
-            using fillFnTy = decltype(__filler<2u, Flags, Iterator, T>);
-            swarm::enqueueTask<fillFnTy, __filler<2u, Flags, Iterator, T> >(
+            swarm::enqueue((fill_impl<2u, Flags, Iterator, T>),
                     ts, Flags, first, last, value);
             break;
         }
         case 4:
         {
-            using fillFnTy = decltype(__filler<4u, Flags, Iterator, T>);
-            swarm::enqueueTask<fillFnTy, __filler<4u, Flags, Iterator, T> >(
+            swarm::enqueue((fill_impl<4u, Flags, Iterator, T>),
                     ts, Flags, first, last, value);
             break;
         }
         case 8:
         {
-            using fillFnTy = decltype(__filler<8u, Flags, Iterator, T>);
-            swarm::enqueueTask<fillFnTy, __filler<8u, Flags, Iterator, T> >(
+            swarm::enqueue((fill_impl<8u, Flags, Iterator, T>),
                     ts, Flags, first, last, value);
             break;
         }
         default:
         {
-            using fillFnTy = decltype(__filler<16u, Flags, Iterator, T>);
-            swarm::enqueueTask<fillFnTy, __filler<16u, Flags, Iterator, T> >(
+            swarm::enqueue((fill_impl<16u, Flags, Iterator, T>),
                     ts, Flags, first, last, value);
             break;
         }

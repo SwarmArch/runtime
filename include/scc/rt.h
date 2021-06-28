@@ -48,6 +48,7 @@ void __sccrt_log_read(const char *access_descriptor, void *address, uint64_t siz
 void __sccrt_log_write(const char *access_descriptor, void *address, uint64_t size);
 uint64_t __sccrt_log_task_spawn(void);
 void __sccrt_log_task_start(const char *task_descriptor, uint64_t dynamic_task_id, uint64_t static_task_id, uint64_t inst_count);
+void __sccrt_log_basicblock_start(uint64_t cost);
 
 // Parallel reductions via thread-private variables
 

@@ -1,5 +1,5 @@
 /** $lic$
- * Copyright (C) 2014-2020 by Massachusetts Institute of Technology
+ * Copyright (C) 2014-2021 by Massachusetts Institute of Technology
  *
  * This file is distributed under the University of Illinois Open Source
  * License. See LICENSE.TXT for details.
@@ -101,9 +101,6 @@ inline uint64_t GetTimestamp(TaskState* const& a) {
     return a->ts;
 }
 
-// This priority queue is instantiated in the accompanying library
-#define _PLS_GLOBAL_PQ_QUALIFIER extern
-
 using PriorityQueue = dtpq<TaskState*, std::priority_queue<TaskState*, std::vector<TaskState*>, CompareTasks>, GetTimestamp>;
 // dsm: PBDS is slower than the native priority_queue here...
 // pairing heap performs better than thin and binary heaps; binomial and rc_binomial do not compile
@@ -139,18 +136,5 @@ inline uint64_t GetTimestamp(const TaskArgs& a) {
 using PriorityQueue = dtpq<TaskArgs, __gnu_pbds::priority_queue<TaskArgs, CompareTasks>, GetTimestamp>;
 
 #endif
-
-#ifndef _PLS_GLOBAL_PQ_QUALIFIER
-// There is one PQ configuration above (the "default") that the shared runtime
-// library instantiates. Other than that one case, the library can't possibly
-// know which to use. This is because of our pattern to make custom definitions
-// just before #including api.h.
-// So users of custom libraries, be warned.
-// FIXME(mcj) there must be a more elegant way to customize the runtime
-// priority queue? I think that putting global variables into a shared library
-// is at least less hacky than the previous SECONDARY_INCLUDE pattern.
-#define _PLS_GLOBAL_PQ_QUALIFIER
-#endif
-
 
 }

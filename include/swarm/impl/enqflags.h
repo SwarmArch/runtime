@@ -1,5 +1,5 @@
 /** $lic$
- * Copyright (C) 2014-2020 by Massachusetts Institute of Technology
+ * Copyright (C) 2014-2021 by Massachusetts Institute of Technology
  *
  * This file is distributed under the University of Illinois Open Source
  * License. See LICENSE.TXT for details.
@@ -29,26 +29,27 @@
 enum EnqFlags {
     NOFLAGS      = 0,
 
-    // Flags up to (1 << 15) can be task properties preserved by coalescers.
-    NOHASH       = 1 << 4,  // use modulo indexing on hint when mapping to a tile, not a hash
-    PRODUCER     = 1 << 5,  // hint that this task will produce more tasks (for enqueuers, splitters, etc)
-    MAYSPEC      = 1 << 6,  // queued task may be executed speculatively, but with serialized hints may also be run non-speculatively
-    CANTSPEC     = 1 << 7,  // queued task cannot be executed speculatively, it is irrevocable
-    ISSOFTPRIO   = 1 << 8,  // soft priority tasks take the programmer-specified timestamp as its soft timestamp
-    // TODO(mcj) rename to NOTIME
-    NOTIMESTAMP  = 1 << 9,  // This task has no timestamp and does not participate in the GVT protocol.
+    // Flags up to (1 << 15) can be task properties preserved during spilling.
+    NOHASH        = 1 << 4,  // use modulo indexing on hint when mapping to a tile, not a hash
+    PRODUCER      = 1 << 5,  // deprioritize w/r/t same-TS tasks, to avoid flooding task queues
+    MAYSPEC       = 1 << 6,  // may run non-speculatively if GVT matches TS
+    CANTSPEC      = 1 << 7,  // only run non-speculatively, and only when GVT matches TS
+    ISSOFTPRIO    = 1 << 8,  // DEPRECATED
+    NOTIMESTAMP   = 1 << 9,  // lacks a TS and does not participate in the GVT protocol.
+    REQUEUER      = 1 << 10, // only run non-speculatively, and can run regardless of GVT value
+    NONSERIALHINT = 1 << 11, // may run in parallel with same-hint tasks
 
-    // Flags (1 << 16) and beyond must be discarded when the task is coalesced.
+    // Flags (1 << 16) and beyond must be discarded when the task is spilled.
     // See MAGIC_OP_TASK_REMOVE_UNTIED implementation in sim for explanations.
-    NOHINT       = 1 << 16, // ignore the spatial hint
-    SAMEHINT     = 1 << 17, // queue with same hint as my task's (--> same tile)
-    SAMETASK     = 1 << 18, // queue with same taskPtr as my task's (avoids clobbering taskPtr reg & saves one move)
-    SAMETIME     = 1 << 19, // THIS FLAG IS DEPRECATED. queue with same timestamp as my task's
-    YIELDIFFULL  = 1 << 20, // if this enqueue would block on a full queue, requeue the parent task and yield the core. Used to support non-speculative splitters
-    PARENTDOMAIN = 1 << 21, // queue to parent domain
-    SUBDOMAIN    = 1 << 22, // queue to the domain created by the current task.
-    SUPERDOMAIN  = 1 << 23, // queue to the immediate enclosing domain
-    RUNONABORT   = 1 << 24, // this task runs when the parent is aborted, and is discarded if the parent commits. Can only be enqueued from priv mode, and is a NOP when irrevocable
+    NOHINT        = 1 << 16, // ignore the spatial hint
+    SAMEHINT      = 1 << 17, // queue with same hint as my task's (--> same tile)
+    SAMETASK      = 1 << 18, // queue with same taskPtr as my task's (avoids clobbering taskPtr reg & saves one move)
+    SAMETIME      = 1 << 19, // THIS FLAG IS DEPRECATED. queue with same timestamp as my task's
+    YIELDIFFULL   = 1 << 20, // if this TSB is full, requeue the parent task and yield the core
+    PARENTDOMAIN  = 1 << 21, // queue to parent domain
+    SUBDOMAIN     = 1 << 22, // queue to the domain created by the current task.
+    SUPERDOMAIN   = 1 << 23, // queue to the immediate enclosing domain
+    RUNONABORT    = 1 << 24, // this task runs when the parent is aborted, and is discarded if the parent commits. Can only be enqueued from priv mode, and is a NOP when irrevocable
 };
 
 #ifdef __cplusplus

@@ -1,5 +1,5 @@
 /** $lic$
- * Copyright (C) 2014-2020 by Massachusetts Institute of Technology
+ * Copyright (C) 2014-2021 by Massachusetts Institute of Technology
  *
  * This file is distributed under the University of Illinois Open Source
  * License. See LICENSE.TXT for details.
@@ -41,10 +41,27 @@ namespace swarm {
 
 #define MAX_TS (-1ul)
 
-extern uint64_t taskIdCounter;
-extern uint64_t curTaskId;
-extern uint64_t curTaskTS;
-extern std::stack<uint64_t> superTsStack;
+// [victory] C++17 would allow defining inline variables in this header file:
+//inline uint64_t taskIdCounter = 0;
+//inline uint64_t curTaskId = MAX_TS;
+//inline uint64_t curTaskTS = MAX_TS;
+//inline std::stack<uint64_t> superTsStack;
+// But since we want to support older versions of GCC, lets use the
+// static-member-of-class-template trick.  See: https://wg21.link/n4424
+template <typename T> struct __OracleRuntimeState {
+  static uint64_t taskIdCounter;
+  static uint64_t curTaskId;
+  static uint64_t curTaskTS;
+  static std::stack<uint64_t> superTsStack;
+};
+template <typename T> uint64_t __OracleRuntimeState<T>::taskIdCounter = 0;
+template <typename T> uint64_t __OracleRuntimeState<T>::curTaskId = MAX_TS;
+template <typename T> uint64_t __OracleRuntimeState<T>::curTaskTS = MAX_TS;
+template <typename T> std::stack<uint64_t> __OracleRuntimeState<T>::superTsStack;
+static uint64_t& taskIdCounter = __OracleRuntimeState<int>::taskIdCounter;
+static uint64_t& curTaskId = __OracleRuntimeState<int>::curTaskId;
+static uint64_t& curTaskTS = __OracleRuntimeState<int>::curTaskTS;
+static std::stack<uint64_t>& superTsStack = __OracleRuntimeState<int>::superTsStack;
 
 static inline void runloop() {
     std::array<int, 1024> a;
@@ -111,8 +128,10 @@ static inline void info(const char* str, Args... args) {
 }
 
 static inline uint32_t num_threads() { return (UINT32_MAX / 128); }
-//TODO(victory): Should the oracle return random thread IDs to distribute dependences?
+static inline uint32_t numTiles() { return (UINT32_MAX / 128); }
+//TODO(victory): Should the oracle return random thread and tile IDs to distribute dependences?
 static inline uint32_t tid() { return 0; }
+static inline uint32_t tileId() { return 0; }
 static inline void serialize() {}
 static inline void clearReadSet() {}
 static inline void recordAsAborted() {}
