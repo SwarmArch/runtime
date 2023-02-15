@@ -24,6 +24,7 @@
 #define pls_likely(x)   __builtin_expect((x), 1)
 
 #include <stdint.h>
+#include <stdio.h>
 #include <type_traits>
 #include "impl/types.h"
 #include "impl/callfunc.h"

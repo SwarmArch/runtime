@@ -367,7 +367,7 @@ template <uint32_t EnqueuesPerTask,
           typename EnqueueLambda,
           typename TimestampLambda,
           typename HintLambda>
-struct alignas(SWARM_CACHE_LINE) __EnqueueStrandsData {
+struct __EnqueueStrandsData {
     EnqueueLambda el;
     TimestampLambda tsl;
     HintLambda hl;
@@ -495,7 +495,7 @@ template <uint32_t EnqueuesPerTask,
           typename EnqueueLambda,
           typename TimestampLambda,
           typename HintLambda>
-struct alignas(SWARM_CACHE_LINE) __EnqueueProgressiveByPointer {
+struct __EnqueueProgressiveByPointer {
 
     using EPD = __EnqueueProgressiveData<EnqueuesPerTask, Iterator,
                                          EnqueueLambda, TimestampLambda,

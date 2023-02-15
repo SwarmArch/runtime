@@ -261,9 +261,7 @@ static inline void spiller_impl(swarm::Timestamp, const uint32_t n) {
         // Frankly, if spillers are frequently removing single tasks, then
         // there is a more important problem to solve in terms of when a
         // spiller is launched.
-        //
-        // N.B. requeuer_impl takes care of deleting the empty tasks array.
-        requeuer_impl<isFrame>(minTs, tdstruct);
+        sim_zero_cycle_free(tdstruct);
     }
 }
 

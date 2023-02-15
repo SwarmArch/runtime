@@ -24,7 +24,6 @@
 #include <boost/iterator/counting_iterator.hpp>
 #include <algorithm>
 #include "api.h"
-#include "aligned.h"
 #include "algorithm.h"
 
 // Normal continuations are simple wrappers for enqueueLambda. Allows breaking
@@ -45,13 +44,14 @@ namespace swarm {
 
 template <typename IterType, typename HintLambda,
           typename BodyLambda, typename TermLambda>
-struct alignas(SWARM_CACHE_LINE) __ForallLoopData {
+struct __ForallLoopData {
+    volatile IterType strandsFinished;
+    char padding[SWARM_CACHE_LINE - sizeof(strandsFinished)];
     const HintLambda hl;
     const BodyLambda bl;
     const IterType sup;
     const IterType stride;
     const TermLambda tl;
-    volatile IterType strandsFinished __attribute__((aligned(SWARM_CACHE_LINE)));
 
     inline void operator()(swarm::Timestamp ts, IterType i) {
         bl(ts, i);
@@ -96,7 +96,7 @@ inline void forall(swarm::Timestamp ts, IterType first, IterType sup,
     uint32_t stride = std::min(sup - first, (IterType) num_threads()*4);
 
     using LD = __ForallLoopData<IterType, HintLambda, BodyLambda, TermLambda>;
-    auto* l = new LD{hl, bl, sup, (IterType)stride, tl, 0};
+    auto* l = new LD{0, {}, hl, bl, sup, (IterType)stride, tl};
 
     swarm::enqueue_all<EnqFlags(NOHINT | MAYSPEC)>(
                      boost::counting_iterator<uint32_t>(0),
@@ -135,15 +135,16 @@ struct Continuation {
 
 template <typename IterType, typename HintLambda,
           typename BodyLambda, typename TermLambda>
-struct alignas(SWARM_CACHE_LINE) __ForallLoopCont : public Continuation {
+struct __ForallLoopCont : public Continuation {
 
-    struct alignas(SWARM_CACHE_LINE) LoopData {
+    struct LoopData {
+        volatile IterType strandsFinished;
+        char padding[SWARM_CACHE_LINE - sizeof(strandsFinished)];
         const HintLambda hl;
         const BodyLambda bl;
         const IterType sup;
         const IterType stride;
         const TermLambda tl;
-        volatile IterType strandsFinished __attribute__((aligned(SWARM_CACHE_LINE)));
     };
 
     LoopData* l;
@@ -194,7 +195,7 @@ inline void forallcc(swarm::Timestamp ts, IterType first, IterType sup,
     uint32_t stride = std::min(sup - first, (IterType) num_threads()*4);
 
     using LC = __ForallLoopCont<IterType, HintLambda, BodyLambda, TermLambda>;
-    auto* l = new typename LC::LoopData{hl, bl, sup, (IterType)stride, tl, 0};
+    auto* l = new typename LC::LoopData{0, {}, hl, bl, sup, (IterType)stride, tl};
 
     swarm::enqueue_all<EnqFlags(NOHINT | MAYSPEC)>(
                      boost::counting_iterator<uint32_t>(0),
@@ -226,7 +227,7 @@ namespace swarm {
 
 template <typename IterType, typename HintLambda, typename BodyLambda,
           typename TermHintLambda, typename TermLambda>
-struct alignas(SWARM_CACHE_LINE) __ForallTSLoopData {
+struct __ForallTSLoopData {
     const HintLambda hl;
     const BodyLambda bl;
     const IterType sup;
@@ -406,9 +407,14 @@ namespace swarm {
 
 template <typename RedType, typename IterType, typename HintLambda,
           typename BodyLambda, typename RedLambda, typename TermLambda>
-struct alignas(SWARM_CACHE_LINE) __ForallRedLoopCont : public CC<RedType> {
+struct __ForallRedLoopCont : public CC<RedType> {
 
-    struct alignas(SWARM_CACHE_LINE) LoopData {
+    RedType redVal;
+    char padding0[SWARM_CACHE_LINE - sizeof(redVal)];
+    uint32_t syncsLeft;
+    char padding1[SWARM_CACHE_LINE - sizeof(syncsLeft)];
+
+    struct LoopData {
         const HintLambda hintLambda;
         const BodyLambda bodyLambda;
         const RedLambda redLambda;
@@ -419,10 +425,6 @@ struct alignas(SWARM_CACHE_LINE) __ForallRedLoopCont : public CC<RedType> {
 
     const LoopData* loopData;
     LoopCont* parent;
-
-    // New cache line
-    RedType redVal __attribute__((aligned(SWARM_CACHE_LINE)));
-    uint32_t syncsLeft;
 
     __ForallRedLoopCont(const LoopData* l, LoopCont* p)
         : loopData(l), parent(p), redVal(l->initialValue), syncsLeft(-1) {}
